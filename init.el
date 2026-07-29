@@ -247,19 +247,24 @@
 
 
 
-;; Tabs
-(tab-bar-mode -1)
-;; always show tab bar
-;; (setq tab-bar-show -1)
-;; (setq tab-bar-new-tab-choice "*scratch*")
-;; (setq tab-bar-close-button-show nil)
-;; (setq tab-bar-new-button-show nil)
-;; (setq tab-bar-tab-hints nil)
+;; Tabs are intentionally disabled.  Keeping `tab-bar-show' nil also prevents
+;; tab commands invoked accidentally from making the tab bar visible.
+(defun my-disable-tabs ()
+  "Remove Emacs tabs and keep both tab interfaces disabled."
+  (dolist (frame (frame-list))
+    (with-selected-frame frame
+      (when (> (length (tab-bar-tabs)) 1)
+        (tab-bar-close-other-tabs))))
+  (tab-bar-mode -1)
+  (global-tab-line-mode -1))
 
-;; Optional: nicer tab names
-(setq tab-bar-tab-name-function #'tab-bar-tab-name-current)
+(setq tab-bar-show nil)
+(my-disable-tabs)
 
 ;; Restore buffers/windows between sessions
+(require 'savehist)
+(require 'desktop)
+
 (savehist-mode 1)
 (save-place-mode 1)
 (recentf-mode 1)
@@ -271,12 +276,14 @@
 (setq desktop-path (list user-emacs-directory))
 
 (setq desktop-save t)
-(setq desktop-load-locked-desktop t)
-(setq desktop-restore-eager 0)
-(setq desktop-restore-frames nil)
+(setq desktop-load-locked-desktop 'check-pid)
+(setq desktop-restore-eager t)
+(setq desktop-restore-frames t)
+(setq desktop-auto-save-timeout 30)
 ;; Игнорируем мусорные буфферы
 (setq desktop-buffers-not-to-save
       "\\(^ \\|\\*Completions\\*\\|\\*Messages\\*\\|\\*Warnings\\*\\|\\*Help\\*\\|\\*scratch\\*\\)")
+(add-hook 'desktop-after-read-hook #'my-disable-tabs)
 (desktop-save-mode 1)
 
 
@@ -355,10 +362,47 @@
          (project-root project))
        default-directory)))
 
-(defun my-search-directory (directory)
-  "Search recursively in DIRECTORY using ripgrep."
-  (interactive "DSearch directory: ")
-  (consult-ripgrep directory))
+(defvar my-search-directory-last-directory nil
+  "Directory used by the most recent `my-search-directory' invocation.")
+
+(defvar my-search-directory-last-query nil
+  "Input used by the most recent `my-search-directory' invocation.")
+
+(dolist (variable '(my-search-directory-last-directory
+                    my-search-directory-last-query
+                    consult--grep-history))
+  (add-to-list 'savehist-additional-variables variable))
+
+(defun my-search-directory--remember-query ()
+  "Remember the current directory-search minibuffer input."
+  (setq my-search-directory-last-query
+        (minibuffer-contents-no-properties)))
+
+(defun my-search-directory (&optional new-search)
+  "Search recursively with ripgrep and remember the search between calls.
+
+Without a prefix argument, reuse the last directory and query so that
+`C-S-r' continues the previous search.  With a prefix argument, prompt for
+a directory and start a new query."
+  (interactive "P")
+  (let* ((saved-directory
+          (and (not new-search)
+               my-search-directory-last-directory
+               (file-directory-p my-search-directory-last-directory)
+               my-search-directory-last-directory))
+         (directory
+          (file-name-as-directory
+           (expand-file-name
+            (or saved-directory
+                (read-directory-name "Search directory: "
+                                     default-directory nil t)))))
+         (initial (and saved-directory my-search-directory-last-query)))
+    (setq my-search-directory-last-directory directory)
+    (minibuffer-with-setup-hook
+        (lambda ()
+          (add-hook 'post-command-hook
+                    #'my-search-directory--remember-query nil t))
+      (consult-ripgrep directory initial))))
 
 (defun load-nordic-midnight ()
   "Load Nordic Midnight on top of Nordic Night."
@@ -620,6 +664,24 @@
       (my-backward-token)
       (delete-region (point) end))))
 
+(defun my-delete-word-forward ()
+  "Delete forward using the standard Emacs word boundary rules."
+  (interactive)
+  (if (use-region-p)
+      (delete-region (region-beginning) (region-end))
+    (let ((start (point)))
+      (forward-word 1)
+      (delete-region start (point)))))
+
+(defun my-delete-word-backward ()
+  "Delete backward using the standard Emacs word boundary rules."
+  (interactive)
+  (if (use-region-p)
+      (delete-region (region-beginning) (region-end))
+    (let ((end (point)))
+      (backward-word 1)
+      (delete-region (point) end))))
+
 (defun my-close-current-window ()
   "Close the selected window, including temporary side windows.
 For windows created by `display-buffer', fall back to `quit-window'
@@ -645,12 +707,12 @@ so that the previous window layout can be restored."
     ("<escape>"          . keyboard-escape-quit)
     ("S-<delete>"        . my-delete-current-line)
 
-    ;; Files, buffers and tabs
+    ;; Files and buffers (Emacs tabs are intentionally not used)
     ("C-s"               . save-buffer)
     ("C-n"               . open-empty-buffer)
     ("C-w"               . kill-current-buffer)
-    ("C-S-w"             . tab-close)
-    ("C-t"               . tab-new)
+    ("C-S-w"             . nil)
+    ("C-t"               . transpose-chars)
     ("C-<tab>"           . next-buffer)
     ("C-S-<tab>"         . previous-buffer)
     ("C-S-<iso-lefttab>" . previous-buffer)
@@ -678,6 +740,12 @@ so that the previous window layout can be restored."
     ("C-<right>"         . my-forward-token)
     ("C-<backspace>"     . my-delete-token-backward)
     ("C-<delete>"        . my-delete-token-forward)
+    ;; Emacs does not expose left/right Ctrl as distinct modifiers.  These
+    ;; bindings provide the old word rules on a separate Emacs-only chord.
+    ("C-M-<left>"        . backward-word)
+    ("C-M-<right>"       . forward-word)
+    ("C-M-<backspace>"   . my-delete-word-backward)
+    ("C-M-<delete>"      . my-delete-word-forward)
     ("C-S-<up>"          . my-move-line-up)
     ("C-S-<down>"        . my-move-line-down)
 
@@ -695,7 +763,9 @@ so that the previous window layout can be restored."
   "Global keybindings used by this configuration.")
 
 (dolist (binding my-global-keybindings)
-  (keymap-global-set (car binding) (cdr binding)))
+  (if (cdr binding)
+      (keymap-global-set (car binding) (cdr binding))
+    (keymap-global-unset (car binding))))
 
 ;; Package-local bindings live here as well.
 (with-eval-after-load 'company
@@ -779,6 +849,10 @@ so that the previous window layout can be restored."
 ;; C-z          Отменить действие
 ;; C-S-z        Вернуть отменённое действие
 ;; S-Delete     Удалить текущую строку
+;; C-M-Left/Right
+;;              Перейти по старым границам слов
+;; C-M-Backspace/Delete
+;;              Удалить по старым границам слов
 ;; C-S-Up       Переместить строку вверх
 ;; C-S-Down     Переместить строку вниз
 ;;
@@ -791,6 +865,8 @@ so that the previous window layout can be restored."
 ;;
 ;; C-f          Искать в текущем файле через consult-line
 ;; C-S-f        Искать по проекту или текущей папке через ripgrep
+;; C-S-r        Продолжить последний поиск по выбранной папке
+;; C-u C-S-r    Начать новый поиск и выбрать папку
 ;;
 ;; Во время поиска:
 ;; Up / Down     Выбрать результат
@@ -811,11 +887,9 @@ so that the previous window layout can be restored."
 ;; Закрытие окна не закрывает буфер.
 ;;
 ;; ------------------------------------------------------------
-;; ВКЛАДКИ И БУФЕРЫ
+;; БУФЕРЫ
 ;; ------------------------------------------------------------
 ;;
-;; C-t          Создать новую вкладку
-;; C-S-w        Закрыть текущую вкладку
 ;; C-w          Закрыть текущий буфер
 ;; C-Tab        Следующий буфер
 ;; C-S-Tab      Предыдущий буфер
