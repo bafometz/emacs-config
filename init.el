@@ -743,7 +743,6 @@ so that the previous window layout can be restored."
 
 (defconst my-global-keybindings
   `(("TAB"               . my-indent-for-tab)
-    ("<tab>"             . my-indent-for-tab)
     ("<backtab>"         . my-unindent-4-spaces)
     ("S-TAB"             . my-unindent-4-spaces)
     ("<escape>"          . keyboard-escape-quit)
