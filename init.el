@@ -10,6 +10,11 @@
             (setq gc-cons-threshold my-normal-gc-cons-threshold
                   gc-cons-percentage 0.1)))
 
+;; Keep Custom's generated settings out of the hand-written configuration.
+(setq custom-file
+      (expand-file-name "custom.el"
+                        (file-name-directory (or load-file-name user-init-file))))
+
 (use-package which-key
   :ensure nil
   :config
@@ -17,7 +22,7 @@
 
 ;; Установка темы nord
 (add-to-list 'custom-theme-load-path (expand-file-name "~/.emacs.d/themes/"))
-(load-theme 'nord t)
+(load-theme 'cyberpunk t)
 
 ;; Disable shitty ring
 (setq ring-bell-function 'ignore)
@@ -79,6 +84,21 @@
       (let ((col (current-column)))
 	(when (>= col 4)
           (delete-region (- (point) 4) (point)))))))
+
+(defun my-indent-for-tab ()
+  "Indent the active region, or indent the current line at point."
+  (interactive)
+  (if (use-region-p)
+      (let ((deactivate-mark nil))
+        (indent-rigidly (region-beginning) (region-end) tab-width))
+    (indent-for-tab-command)))
+
+(defun my-comment-dwim ()
+  "Comment or uncomment the active region, or the current line."
+  (interactive)
+  (if (use-region-p)
+      (comment-or-uncomment-region (region-beginning) (region-end))
+    (comment-line 1)))
 
 ;; Удаление строки по shift + del
 (defun my-delete-current-line ()
@@ -343,6 +363,12 @@
   :ensure t
   :commands (consult-buffer consult-line consult-ripgrep consult-goto-line))
 
+(defun my-consult-line-repeat ()
+  "Search with Consult, pre-filling the most recent line-search query."
+  (interactive)
+  (consult-line (and (boundp 'consult--line-history)
+                     (car consult--line-history))))
+
 (use-package embark
   :ensure t
   :commands (embark-act embark-dwim embark-bindings)
@@ -563,7 +589,22 @@ a directory and start a new query."
          "v0.23.3")
         (rust
          "https://github.com/tree-sitter/tree-sitter-rust.git"
-         "v0.23.2")))
+         "v0.23.2")
+        (markdown
+         "https://github.com/tree-sitter-grammars/tree-sitter-markdown.git"
+         "v0.3.2"
+         "tree-sitter-markdown/src" ;; path to sources 
+         )
+        (markdown-inline
+         "https://github.com/tree-sitter-grammars/tree-sitter-markdown"
+         "v0.3.2"
+         "tree-sitter-markdown-inline/src")
+        (json
+         "https://github.com/tree-sitter/tree-sitter-json.git"
+         "v0.23.0"
+         "src")
+        ))
+
 
 (defun my-install-missing-treesit-grammars ()
   "Install every missing tree-sitter grammar during startup."
@@ -701,7 +742,8 @@ so that the previous window layout can be restored."
   "Keymap derived from `ctl-x-map' and used behind the M-p prefix.")
 
 (defconst my-global-keybindings
-  `(("TAB"               . tab-to-tab-stop)
+  `(("TAB"               . my-indent-for-tab)
+    ("<tab>"             . my-indent-for-tab)
     ("<backtab>"         . my-unindent-4-spaces)
     ("S-TAB"             . my-unindent-4-spaces)
     ("<escape>"          . keyboard-escape-quit)
@@ -723,7 +765,7 @@ so that the previous window layout can be restored."
     ("M-p"               . ,my-ctl-x-map)
 
     ;; Search and navigation
-    ("C-f"               . consult-line)
+    ("C-f"               . my-consult-line-repeat)
     ("C-S-f"             . my-search-project)
     ("C-S-r"             . my-search-directory)
     ("M-g g"             . consult-goto-line)
@@ -735,7 +777,8 @@ so that the previous window layout can be restored."
 
     ;; Editing
     ("C-SPC"             . company-complete)
-    ("C-/"               . comment-line)
+    ("C-/"               . my-comment-dwim)
+    ("C-v"               . cua-paste)
     ("C-<left>"          . my-backward-token)
     ("C-<right>"         . my-forward-token)
     ("C-<backspace>"     . my-delete-token-backward)
@@ -772,8 +815,8 @@ so that the previous window layout can be restored."
   (dolist (binding
            '(("TAB"      . company-complete-selection)
              ("<tab>"    . company-complete-selection)
-             ("RET"      . nil)
-             ("<return>" . nil)))
+             ("RET"      . company-complete-selection)
+             ("<return>" . company-complete-selection)))
     (if (cdr binding)
         (keymap-set company-active-map
                     (car binding)
@@ -856,14 +899,15 @@ so that the previous window layout can be restored."
 ;; C-S-Up       Переместить строку вверх
 ;; C-S-Down     Переместить строку вниз
 ;;
-;; TAB          Добавить отступ
+;; TAB          Добавить отступ (или сдвинуть выделенный блок)
 ;; S-TAB        Убрать до 4 пробелов отступа
+;; C-/          Закомментировать/раскомментировать строку или блок
 ;;
 ;; ------------------------------------------------------------
 ;; ПОИСК
 ;; ------------------------------------------------------------
 ;;
-;; C-f          Искать в текущем файле через consult-line
+;; C-f          Искать в текущем файле во всплывающем окне; повторное C-f — тот же запрос
 ;; C-S-f        Искать по проекту или текущей папке через ripgrep
 ;; C-S-r        Продолжить последний поиск по выбранной папке
 ;; C-u C-S-r    Начать новый поиск и выбрать папку
@@ -943,7 +987,7 @@ so that the previous window layout can be restored."
 ;; M-p C-f      Открыть файл
 ;; C-s          Сохранить
 ;; M-p b        Переключить буфер
-;; C-f          Поиск в файле
+;; C-f          Поиск в файле во всплывающем окне
 ;; C-S-f        Поиск по проекту
 ;; C-z          Отмена
 ;; C-g          Прервать команду
@@ -952,3 +996,4 @@ so that the previous window layout can be restored."
 ;; Если Emacs ждёт непонятный ввод — нажми C-g.
 ;;
 ;; ============================================================
+(load custom-file 'noerror)
