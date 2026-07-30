@@ -444,7 +444,7 @@ a directory and start a new query."
 
 ;; C-f       искать в текущем файле
 ;; C-S-f     искать по проекту/папке
-;; C-p       искать команду Emacs по имени
+;; M-p       искать команду Emacs по имени
 ;; Consult ripgrep:
 ;;hello              найти hello
 ;; hello world        найти строки, подходящие под оба слова через orderless-фильтрацию
@@ -739,7 +739,7 @@ so that the previous window layout can be restored."
     (keymap-set map "0" #'my-close-current-window)
     (keymap-set map "b" #'consult-buffer)
     map)
-  "Keymap derived from `ctl-x-map' and used behind the M-p prefix.")
+  "Keymap derived from `ctl-x-map' and used behind the C-p prefix.")
 
 (defconst my-global-keybindings
   `(("TAB"               . my-indent-for-tab)
@@ -760,8 +760,8 @@ so that the previous window layout can be restored."
     ("C-q"               . my-quit-emacs)
 
     ;; Commands and the old C-x prefix
-    ("C-p"               . execute-extended-command)
-    ("M-p"               . ,my-ctl-x-map)
+    ("C-p"               . ,my-ctl-x-map)
+    ("M-p"               . execute-extended-command)
 
     ;; Search and navigation
     ("C-f"               . my-consult-line-repeat)
@@ -834,17 +834,17 @@ so that the previous window layout can be restored."
   (keymap-set mc/keymap "<escape>" #'mc/keyboard-quit))
 
 ;; ======================= CHEAT SHEET =============
-;;   M-p C-f     открыть файл, раньше C-x C-f
-;;   M-p C-s     сохранить файл, раньше C-x C-s
-;;   M-p b       переключить буфер
-;;   M-p k       закрыть буфер
-;;   M-p 2       split below
-;;   M-p 3       split right
-;;   M-p 0       закрыть текущее окно
-;;   M-p 1       оставить одно окно
-;;  alt +p, ctrl + f - find-file
-;;  alt+p, b - список буферов
-;;  alt+p, b, RET - переключиться на прошлый буфер
+;;   C-p C-f     открыть файл, раньше C-x C-f
+;;   C-p C-s     сохранить файл, раньше C-x C-s
+;;   C-p b       переключить буфер
+;;   C-p k       закрыть буфер
+;;   C-p 2       split below
+;;   C-p 3       split right
+;;   C-p 0       закрыть текущее окно
+;;   C-p 1       оставить одно окно
+;;  ctrl+p, ctrl+f - find-file
+;;  ctrl+p, b - список буферов
+;;  ctrl+p, b, RET - переключиться на прошлый буфер
 ;;  ctr+g - отменить команду
 ;;
 
@@ -861,21 +861,21 @@ so that the previous window layout can be restored."
 ;; КОМАНДЫ И ОТМЕНА
 ;; ------------------------------------------------------------
 ;;
-;; C-p          Найти и выполнить команду (аналог стандартного M-x)
+;; M-p          Найти и выполнить команду (аналог стандартного M-x)
 ;; C-g          Отменить текущую команду / закрыть minibuffer
 ;;
 ;; Пример:
-;; C-p  find-file  RET
+;; M-p  find-file  RET
 ;;
 ;; ------------------------------------------------------------
 ;; ФАЙЛЫ И БУФЕРЫ
 ;; ------------------------------------------------------------
 ;;
-;; M-p C-f      Открыть или создать файл
+;; C-p C-f      Открыть или создать файл
 ;; C-s          Сохранить текущий файл
-;; M-p b        Переключиться на другой буфер
-;; M-p k        Закрыть буфер
-;; M-p C-b      Показать список буферов
+;; C-p b        Переключиться на другой буфер
+;; C-p k        Закрыть буфер
+;; C-p C-b      Показать список буферов
 ;;
 ;; Файл хранится на диске.
 ;; Буфер — открытая копия файла внутри Emacs.
@@ -920,11 +920,11 @@ so that the previous window layout can be restored."
 ;; ОКНА
 ;; ------------------------------------------------------------
 ;;
-;; M-p 2        Разделить экран сверху и снизу
-;; M-p 3        Разделить экран слева и справа
-;; M-p o        Перейти в другое окно
-;; M-p 0        Закрыть текущее окно
-;; M-p 1        Оставить только текущее окно
+;; C-p 2        Разделить экран сверху и снизу
+;; C-p 3        Разделить экран слева и справа
+;; C-p o        Перейти в другое окно
+;; C-p 0        Закрыть текущее окно
+;; C-p 1        Оставить только текущее окно
 ;;
 ;; Окно — область экрана.
 ;; Закрытие окна не закрывает буфер.
@@ -948,7 +948,7 @@ so that the previous window layout can be restored."
 ;; C-n          Следующий вариант
 ;; C-p          Предыдущий вариант
 ;; TAB          Принять выбранный вариант
-;; RET          Новая строка, не принятие варианта
+;; RET          Принять выбранный вариант
 ;;
 ;; ------------------------------------------------------------
 ;; НЕСКОЛЬКО КУРСОРОВ
@@ -962,13 +962,13 @@ so that the previous window layout can be restored."
 ;; СПРАВКА
 ;; ------------------------------------------------------------
 ;;
-;; C-p describe-key       Узнать, что делает клавиша
-;; C-p describe-function  Прочитать описание функции
-;; C-p describe-variable  Прочитать описание переменной
-;; C-p describe-mode      Узнать текущий major mode
+;; M-p describe-key       Узнать, что делает клавиша
+;; M-p describe-function  Прочитать описание функции
+;; M-p describe-variable  Прочитать описание переменной
+;; M-p describe-mode      Узнать текущий major mode
 ;;
 ;; Пример:
-;; C-p  describe-key  RET  C-f
+;; M-p  describe-key  RET  C-f
 ;;
 ;; ------------------------------------------------------------
 ;; ВЫХОД
@@ -982,16 +982,16 @@ so that the previous window layout can be restored."
 ;; ГЛАВНОЕ НА КАЖДЫЙ ДЕНЬ
 ;; ------------------------------------------------------------
 ;;
-;; C-p          Выполнить команду
-;; M-p C-f      Открыть файл
+;; M-p          Выполнить команду
+;; C-p C-f      Открыть файл
 ;; C-s          Сохранить
-;; M-p b        Переключить буфер
+;; C-p b        Переключить буфер
 ;; C-f          Поиск в файле во всплывающем окне
 ;; C-S-f        Поиск по проекту
 ;; C-z          Отмена
 ;; C-g          Прервать команду
 ;; M-g g        Перейти к строке
-;; Если не знаешь клавишу — используй C-p и имя команды.
+;; Если не знаешь клавишу — используй M-p и имя команды.
 ;; Если Emacs ждёт непонятный ввод — нажми C-g.
 ;;
 ;; ============================================================
