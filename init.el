@@ -45,7 +45,8 @@
 
 ;; Minimal UI
 ;; Disable top menu bar: File / Edit / Options...
-(if (display-graphic-p) (menu-bar-mode -1))
+(menu-bar-mode -1)
+(add-to-list 'default-frame-alist '(menu-bar-lines . 0))
 ;; Disable toolbar with icons
 (if (display-graphic-p) (tool-bar-mode -1))
 ;; Disable scrollbar
@@ -199,6 +200,26 @@
 (setq initial-buffer-choice nil)
 (setq initial-scratch-message nil)
 
+(defvar-local my-scratch-buffer-p nil
+  "Non-nil when the current buffer is one of my scratch buffers.")
+
+(defun my-confirm-kill-modified-scratch ()
+  "Ask before killing a modified scratch buffer."
+  (or (not (and my-scratch-buffer-p
+                (buffer-modified-p)))
+      (yes-or-no-p
+       (format "Scratch buffer %s has unsaved changes; close it? "
+               (buffer-name)))))
+
+(defun my-protect-scratch-buffer ()
+  "Mark the current buffer as scratch and protect its unsaved contents."
+  (setq-local my-scratch-buffer-p t)
+  (add-hook 'kill-buffer-query-functions
+            #'my-confirm-kill-modified-scratch nil t))
+
+(with-current-buffer (get-buffer-create "*scratch*")
+  (my-protect-scratch-buffer))
+
 ;; Закрытие emacs по ctrl + q 
 (defun my-quit-emacs ()
   "Quit Emacs."
@@ -329,8 +350,11 @@
         company-selection-wrap-around t
         company-tooltip-align-annotations t
         company-backends '((company-dabbrev company-files))
-        company-dabbrev-other-buffers t
+        company-dabbrev-other-buffers 'all
         company-dabbrev-code-other-buffers t
+        ;; Treat underscores as part of an identifier, so `file_path' is
+        ;; collected and completed as one candidate instead of two words.
+        company-dabbrev-char-regexp "\\(?:\\sw\\|\\s_\\)"
         company-dabbrev-downcase nil
         company-dabbrev-minimum-length 2
         company-dabbrev-ignore-case t))
@@ -459,25 +483,10 @@ a directory and start a new query."
   :init
   (setq mc/always-run-for-all t))
 
-;; Использование всплывающего окна (по нажатию ctrl+p)вместо командной строки внизу
-;; По аналогии с sublime text
-(use-package vertico-posframe
-  :ensure t
-  :after vertico
-  :defer 1
-  :custom
-  ;; Показывать окно по центру Emacs.
-  (vertico-posframe-poshandler
-   #'posframe-poshandler-frame-center)
-
-  ;; Небольшая рамка и внутренние отступы.
-  (vertico-posframe-border-width 2)
-  (vertico-posframe-parameters
-   '((left-fringe . 8)
-     (right-fringe . 8)))
-
-  :config
-  (vertico-posframe-mode 1))
+;; Keep Vertico in the regular minibuffer at the bottom of the frame.
+;; `vertico-posframe-mode' is deliberately not enabled.
+(with-eval-after-load 'vertico-posframe
+  (vertico-posframe-mode -1))
 
 
 ;; Пакет для поведения похожего на ide для удобного перемещения между позициями
@@ -561,7 +570,8 @@ a directory and start a new query."
   (interactive)
   (let ((buf (generate-new-buffer "*scratch-empty*")))
     (switch-to-buffer buf)
-    (funcall initial-major-mode)))
+    (funcall initial-major-mode)
+    (my-protect-scratch-buffer)))
 
 ;; more here https://github.com/emacs-tree-sitter/tree-sitter-langs/tree/master/repos
 ;; do not forget treesit-install-language-grammar
@@ -812,7 +822,8 @@ so that the previous window layout can be restored."
 ;; Package-local bindings live here as well.
 (with-eval-after-load 'company
   (dolist (binding
-           '(("TAB"      . company-complete-selection)
+           '(("<escape>" . company-abort)
+             ("TAB"      . company-complete-selection)
              ("<tab>"    . company-complete-selection)
              ("RET"      . company-complete-selection)
              ("<return>" . company-complete-selection)))
@@ -821,6 +832,16 @@ so that the previous window layout can be restored."
                     (car binding)
                     (cdr binding))
       (keymap-unset company-active-map (car binding)))))
+
+(with-eval-after-load 'magit
+  ;; Magit's full local keymap must explicitly expose the custom C-p prefix.
+  (keymap-set magit-mode-map "C-p" my-ctl-x-map)
+  (keymap-set magit-mode-map "<escape>" #'keyboard-escape-quit))
+
+(with-eval-after-load 'transient
+  ;; Magit popups are implemented by Transient and use their own active maps.
+  (keymap-set transient-base-map "<escape>" #'transient-quit-one)
+  (keymap-set transient-sticky-map "<escape>" #'transient-quit-seq))
 
 (with-eval-after-load 'multiple-cursors
   ;; CUA normally treats these as single commands.  Multiple-cursors must
