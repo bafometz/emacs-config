@@ -788,16 +788,16 @@ so that the previous window layout can be restored."
     ("C-SPC"             . company-complete)
     ("C-/"               . my-comment-dwim)
     ("C-v"               . cua-paste)
-    ("C-<left>"          . my-backward-token)
-    ("C-<right>"         . my-forward-token)
-    ("C-<backspace>"     . my-delete-token-backward)
-    ("C-<delete>"        . my-delete-token-forward)
-    ;; Emacs does not expose left/right Ctrl as distinct modifiers.  These
-    ;; bindings provide the old word rules on a separate Emacs-only chord.
-    ("C-M-<left>"        . backward-word)
-    ("C-M-<right>"       . forward-word)
-    ("C-M-<backspace>"   . my-delete-word-backward)
-    ("C-M-<delete>"      . my-delete-word-forward)
+    ("C-<left>"          . backward-word)
+    ("C-<right>"         . forward-word)
+    ("C-<backspace>"     . my-delete-word-backward)
+    ("C-<delete>"        . my-delete-word-forward)
+    ;; C-M treats identifiers with underscores, such as `file_path',
+    ;; as one token.
+    ("C-M-<left>"        . my-backward-token)
+    ("C-M-<right>"       . my-forward-token)
+    ("C-M-<backspace>"   . my-delete-token-backward)
+    ("C-M-<delete>"      . my-delete-token-forward)
     ("C-S-<up>"          . my-move-line-up)
     ("C-S-<down>"        . my-move-line-down)
 
@@ -912,10 +912,13 @@ so that the previous window layout can be restored."
 ;; C-z          Отменить действие
 ;; C-S-z        Вернуть отменённое действие
 ;; S-Delete     Удалить текущую строку
+;; C-Left/Right Перейти по стандартным границам слов Emacs
+;; C-Backspace/Delete
+;;              Удалить по стандартным границам слов Emacs
 ;; C-M-Left/Right
-;;              Перейти по старым границам слов
+;;              Перейти через цельный идентификатор вроде file_path
 ;; C-M-Backspace/Delete
-;;              Удалить по старым границам слов
+;;              Удалить цельный идентификатор вроде file_path
 ;; C-S-Up       Переместить строку вверх
 ;; C-S-Down     Переместить строку вниз
 ;;
