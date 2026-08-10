@@ -10,19 +10,26 @@
             (setq gc-cons-threshold my-normal-gc-cons-threshold
                   gc-cons-percentage 0.1)))
 
+;; Keep paths relative to this configuration.  This also makes the checked-in
+;; themes work when the repository is not located at ~/.emacs.d.
+(defconst my-config-directory
+  (file-name-directory
+   (or load-file-name (buffer-file-name) user-init-file))
+  "Directory containing this Emacs configuration.")
+
 ;; Keep Custom's generated settings out of the hand-written configuration.
-(setq custom-file
-      (expand-file-name "custom.el"
-                        (file-name-directory (or load-file-name user-init-file))))
+(setq custom-file (expand-file-name "custom.el" my-config-directory))
 
 (use-package which-key
   :ensure nil
   :config
   (which-key-mode 1))
 
-;; Установка темы nord
-(add-to-list 'custom-theme-load-path (expand-file-name "~/.emacs.d/themes/"))
-(load-theme 'cyberpunk t)
+;; Themes shipped with this configuration: Nord, Cyberpunk, Nordic Night,
+;; Nordic Midnight and Solo Jazz.
+(add-to-list 'custom-theme-load-path
+             (expand-file-name "themes/" my-config-directory))
+(load-theme 'nordic-night t)
 
 ;; Disable shitty ring
 (setq ring-bell-function 'ignore)
@@ -37,10 +44,51 @@
    (window-height . 0.3)
    (preserve-size . (nil . t))))
 
+(defun my-list-buffers-bottom (&optional files-only)
+  "Show the buffer list in a window at the bottom and move focus into it.
+With optional FILES-ONLY, list only buffers visiting files."
+  (interactive "P")
+  (let ((buffer (list-buffers-noselect files-only)))
+    (pop-to-buffer
+     buffer
+     '((display-buffer-below-selected)
+       (window-height . 0.3)
+       (preserve-size . (nil . t))
+       (inhibit-same-window . t)))
+    (let ((window (selected-window)))
+      (when (window-live-p window)
+        (select-window window)
+        (goto-char (point-min))
+        (when (fboundp 'Buffer-menu-beginning)
+          (Buffer-menu-beginning))))))
+
+;; Make both `M-x list-buffers' and keys bound to `list-buffers' use the
+;; focused bottom window.
+(advice-remove 'list-buffers #'my-list-buffers-popup)
+(advice-add 'list-buffers :override #'my-list-buffers-bottom)
+
+(with-eval-after-load 'buff-menu
+  (keymap-set Buffer-menu-mode-map "RET"
+              #'Buffer-menu-this-window)
+  (keymap-set Buffer-menu-mode-map "<return>"
+              #'Buffer-menu-this-window))
+
 ;; Font
 (set-face-attribute 'default nil
-                    :family "Go-Mono"
-                    :height 140)
+                    :family "Go Mono"
+                    :height 200)
+
+(use-package eglot
+  :ensure nil
+  :hook ((c-mode . eglot-ensure)
+         (c-ts-mode . eglot-ensure)
+         (c++-mode . eglot-ensure)
+         (c++-ts-mode . eglot-ensure))
+  :config
+  (add-to-list
+   'eglot-server-programs
+   '((c-mode c-ts-mode c++-mode c++-ts-mode)
+     . ("clangd" "--clang-tidy"))))
 
 
 ;; Minimal UI
@@ -387,11 +435,36 @@
   :ensure t
   :commands (consult-buffer consult-line consult-ripgrep consult-goto-line))
 
+(defun my-active-region-text ()
+  "Return the active region as plain text, or nil when there is none."
+  (when (use-region-p)
+    (buffer-substring-no-properties (region-beginning) (region-end))))
+
+(defun my-select-minibuffer-input ()
+  "Select all editable minibuffer input, excluding its prompt."
+  (when (minibufferp)
+    (goto-char (point-max))
+    (set-mark (minibuffer-prompt-end))
+    (setq deactivate-mark nil)
+    (activate-mark)))
+
+(defmacro my-with-selected-minibuffer-input (&rest body)
+  "Run BODY and select the initial text in the minibuffer it opens."
+  (declare (indent 0) (debug t))
+  `(minibuffer-with-setup-hook #'my-select-minibuffer-input
+     ,@body))
+
 (defun my-consult-line-repeat ()
-  "Search with Consult, pre-filling the most recent line-search query."
+  "Search with Consult using the region or the previous search query.
+The initial query is selected, so typing replaces it while navigation keys
+can immediately continue the existing search."
   (interactive)
-  (consult-line (and (boundp 'consult--line-history)
-                     (car consult--line-history))))
+  (let ((initial
+         (or (my-active-region-text)
+             (and (boundp 'consult--line-history)
+                  (car consult--line-history)))))
+    (my-with-selected-minibuffer-input
+      (consult-line initial))))
 
 (use-package embark
   :ensure t
@@ -432,8 +505,9 @@
   "Search recursively with ripgrep and remember the search between calls.
 
 Without a prefix argument, reuse the last directory and query so that
-`C-S-r' continues the previous search.  With a prefix argument, prompt for
-a directory and start a new query."
+`C-S-r' continues the previous search.  Its query is selected, so simply
+typing starts a new search in the same directory.  With a prefix argument,
+prompt for another directory."
   (interactive "P")
   (let* ((saved-directory
           (and (not new-search)
@@ -448,11 +522,12 @@ a directory and start a new query."
                                      default-directory nil t)))))
          (initial (and saved-directory my-search-directory-last-query)))
     (setq my-search-directory-last-directory directory)
-    (minibuffer-with-setup-hook
-        (lambda ()
-          (add-hook 'post-command-hook
-                    #'my-search-directory--remember-query nil t))
-      (consult-ripgrep directory initial))))
+    (my-with-selected-minibuffer-input
+      (minibuffer-with-setup-hook
+          (lambda ()
+            (add-hook 'post-command-hook
+                      #'my-search-directory--remember-query nil t))
+        (consult-ripgrep directory initial)))))
 
 (defun load-nordic-midnight ()
   "Load Nordic Midnight on top of Nordic Night."
@@ -844,9 +919,39 @@ so that the previous window layout can be restored."
   (keymap-set transient-sticky-map "<escape>" #'transient-quit-seq))
 
 (with-eval-after-load 'multiple-cursors
-  ;; CUA normally treats these as single commands.  Multiple-cursors must
-  ;; execute them separately for every real and fake cursor.
-  (dolist (command '(cua-cut-region cua-copy-region cua-paste))
+  (defun my-cua-copy-all-cursor-regions (original-function argument)
+    "Copy every multiple-cursor region as one newline-separated block.
+Otherwise call ORIGINAL-FUNCTION with ARGUMENT normally."
+    (if (and (bound-and-true-p multiple-cursors-mode)
+             (> (mc/num-cursors) 1))
+        (let (pieces)
+          (mc/for-each-cursor-ordered
+           (let ((cursor-point (overlay-get cursor 'point))
+                 (cursor-mark (overlay-get cursor 'mark)))
+             (when (and (overlay-get cursor 'mark-active)
+                        cursor-point
+                        cursor-mark)
+               (push (buffer-substring-no-properties
+                      (min cursor-point cursor-mark)
+                      (max cursor-point cursor-mark))
+                     pieces))))
+          (if pieces
+              (let* ((pieces (nreverse pieces))
+                     (text (mapconcat #'identity pieces "\n")))
+                (kill-new text)
+                (deactivate-mark)
+                ;; `mc/always-run-for-all' is enabled above.  Prevent its
+                ;; post-command hook from copying once again per fake cursor.
+                (setq this-command #'ignore)
+                (message "Copied %d selections" (length pieces)))
+            (funcall original-function argument)))
+      (funcall original-function argument)))
+
+  (advice-add 'cua-copy-region :around #'my-cua-copy-all-cursor-regions)
+
+  ;; Cutting and pasting should still execute at every cursor.  Copying is
+  ;; handled once above so that the clipboard contains every selected line.
+  (dolist (command '(cua-cut-region cua-paste))
     (setq mc/cmds-to-run-once
           (delq command mc/cmds-to-run-once))
     (add-to-list 'mc/cmds-to-run-for-all command))
@@ -930,10 +1035,10 @@ so that the previous window layout can be restored."
 ;; ПОИСК
 ;; ------------------------------------------------------------
 ;;
-;; C-f          Искать в текущем файле во всплывающем окне; повторное C-f — тот же запрос
+;; C-f          Искать в текущем файле; выделение становится запросом
 ;; C-S-f        Искать по проекту или текущей папке через ripgrep
-;; C-S-r        Продолжить последний поиск по выбранной папке
-;; C-u C-S-r    Начать новый поиск и выбрать папку
+;; C-S-r        Продолжить поиск; печать заменяет выделенный старый запрос
+;; C-u C-S-r    Выбрать другую папку (используется только при необходимости)
 ;;
 ;; Во время поиска:
 ;; Up / Down     Выбрать результат
@@ -1010,7 +1115,7 @@ so that the previous window layout can be restored."
 ;; C-p C-f      Открыть файл
 ;; C-s          Сохранить
 ;; C-p b        Переключить буфер
-;; C-f          Поиск в файле во всплывающем окне
+;; C-f          Поиск в файле; выделенный текст сразу попадёт в запрос
 ;; C-S-f        Поиск по проекту
 ;; C-z          Отмена
 ;; C-g          Прервать команду
