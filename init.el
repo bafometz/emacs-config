@@ -1,3 +1,5 @@
+;;; init.el --- Personal Emacs configuration  -*- lexical-binding: t; -*-
+
 ;; Reduce garbage collections while loading the configuration.
 (defconst my-normal-gc-cons-threshold (* 16 1024 1024)
   "Garbage collection threshold used after Emacs has started.")
@@ -43,35 +45,6 @@
    (slot . 0)
    (window-height . 0.3)
    (preserve-size . (nil . t))))
-
-(defun my-list-buffers-bottom (&optional files-only)
-  "Show the buffer list in a window at the bottom and move focus into it.
-With optional FILES-ONLY, list only buffers visiting files."
-  (interactive "P")
-  (let ((buffer (list-buffers-noselect files-only)))
-    (pop-to-buffer
-     buffer
-     '((display-buffer-below-selected)
-       (window-height . 0.3)
-       (preserve-size . (nil . t))
-       (inhibit-same-window . t)))
-    (let ((window (selected-window)))
-      (when (window-live-p window)
-        (select-window window)
-        (goto-char (point-min))
-        (when (fboundp 'Buffer-menu-beginning)
-          (Buffer-menu-beginning))))))
-
-;; Make both `M-x list-buffers' and keys bound to `list-buffers' use the
-;; focused bottom window.
-(advice-remove 'list-buffers #'my-list-buffers-popup)
-(advice-add 'list-buffers :override #'my-list-buffers-bottom)
-
-(with-eval-after-load 'buff-menu
-  (keymap-set Buffer-menu-mode-map "RET"
-              #'Buffer-menu-this-window)
-  (keymap-set Buffer-menu-mode-map "<return>"
-              #'Buffer-menu-this-window))
 
 ;; Font
 (set-face-attribute 'default nil
@@ -120,19 +93,17 @@ With optional FILES-ONLY, list only buffers visiting files."
 (setq-default standard-indent 4)
 ;; 
 
-(defun my-unindent-4-spaces ()
-  "Remove up to 4 leading spaces from the current line or region."
+(defun my-unindent ()
+  "Remove up to `tab-width' columns from the current line or region."
   (interactive)
   (if (use-region-p)
-      ;; Если выделен регион — сдвигаем все строки региона влево                                          
       (let ((deactivate-mark nil))
-	(indent-rigidly (region-beginning) (region-end) -4))
-    ;; Если региона нет — удаляем до 4 пробелов в начале текущей строки                                   
-    (save-excursion
-      (back-to-indentation)
-      (let ((col (current-column)))
-	(when (>= col 4)
-          (delete-region (- (point) 4) (point)))))))
+        (indent-rigidly (region-beginning) (region-end) (- tab-width)))
+    (let* ((indent (current-indentation))
+           (amount (min tab-width indent)))
+      (when (> amount 0)
+        (save-excursion
+          (indent-line-to (- indent amount)))))))
 
 (defun my-indent-for-tab ()
   "Indent the active region, or indent the current line at point."
@@ -161,37 +132,95 @@ With optional FILES-ONLY, list only buffers visiting files."
 
 ;; Familiar copy, cut, paste and undo shortcuts.
 (cua-mode 1)
-;; Do not use CUA rectangle selection.
-(setq cua-enable-cua-keys t)
-
-;; Copy / paste / cut
-(defun my-copy ()
-  "Copy selected region."
-  (interactive)
-  (if (use-region-p)
-      (kill-ring-save (region-beginning) (region-end))
-    (message "No region selected")))
-
-(defun my-cut ()
-  "Cut selected region."
-  (interactive)
-  (if (use-region-p)
-      (kill-region (region-beginning) (region-end))
-    (message "No region selected")))
 
 ;; ctrl + shift и стрелка вверх/вниз для перемещения строчки
+(defun my-move-line-or-region (direction)
+  "Move the current line or active region by one line in DIRECTION.
+DIRECTION must be -1 to move up or 1 to move down.  When a region is
+active, move every line touched by that region and keep it selected."
+  (unless (memq direction '(-1 1))
+    (error "Invalid move direction: %S" direction))
+  (let* ((region-active (use-region-p))
+         (original-point (point))
+         (original-mark (and region-active (mark)))
+         (raw-beginning (if region-active (region-beginning) (point)))
+         (raw-end (if region-active (region-end) (point)))
+         ;; `transpose-regions' needs a separator after the final line.  Add
+         ;; one temporarily so files without a trailing newline are not joined.
+         (temporary-final-newline
+          (and (> (point-max) (point-min))
+               (not (eq (char-before (point-max)) ?\n)))))
+    (unwind-protect
+        (progn
+          (when temporary-final-newline
+            (save-excursion
+              (goto-char (point-max))
+              (insert "\n")))
+          (let* ((beginning
+                  (save-excursion
+                    (goto-char raw-beginning)
+                    (line-beginning-position)))
+                 (end
+                  (save-excursion
+                    (goto-char raw-end)
+                    (if (and region-active
+                             (> raw-end beginning)
+                             (= raw-end (line-beginning-position)))
+                        raw-end
+                      (line-beginning-position 2))))
+                 (point-offset (- original-point beginning))
+                 (mark-offset
+                  (and region-active (- original-mark beginning)))
+                 new-beginning)
+            (when (= beginning end)
+              (user-error "There is no line content to move"))
+            (if (< direction 0)
+                (progn
+                  (when (= beginning (point-min))
+                    (user-error "Already at the first line"))
+                  (let ((previous-beginning
+                         (save-excursion
+                           (goto-char beginning)
+                           (line-beginning-position 0))))
+                    (transpose-regions
+                     previous-beginning beginning beginning end)
+                    (setq new-beginning previous-beginning)))
+              (when (= end (point-max))
+                (user-error "Already at the last line"))
+              (let ((next-end
+                     (save-excursion
+                       (goto-char end)
+                       (line-beginning-position 2))))
+                (transpose-regions beginning end end next-end)
+                (setq new-beginning
+                      (+ beginning (- next-end end)))))
+            (when temporary-final-newline
+              (save-excursion
+                (goto-char (point-max))
+                (delete-char -1))
+              (setq temporary-final-newline nil))
+            (goto-char (min (point-max)
+                            (+ new-beginning point-offset)))
+            (when region-active
+              (set-mark (min (point-max)
+                             (+ new-beginning mark-offset)))
+              (setq deactivate-mark nil)
+              (activate-mark))))
+      (when (and temporary-final-newline
+                 (eq (char-before (point-max)) ?\n))
+        (save-excursion
+          (goto-char (point-max))
+          (delete-char -1))))))
+
 (defun my-move-line-up ()
   "Move current line or selected region up by one line."
   (interactive)
-  (transpose-lines 1)
-  (forward-line -2))
+  (my-move-line-or-region -1))
 
 (defun my-move-line-down ()
   "Move current line or selected region down by one line."
   (interactive)
-  (forward-line 1)
-  (transpose-lines 1)
-  (forward-line -1))
+  (my-move-line-or-region 1))
 
 ;;Подсветка текущей строки
 ;; Line numbers
@@ -239,10 +268,9 @@ With optional FILES-ONLY, list only buffers visiting files."
 
 
 
-;; Disable startup screen
+;; Disable startup screen.  The older variable names
+;; `inhibit-startup-message' and `inhibit-splash-screen' are aliases for this.
 (setq inhibit-startup-screen t)
-(setq inhibit-startup-message t)
-(setq inhibit-splash-screen t)
 
 ;; Start with scratch buffer
 (setq initial-buffer-choice nil)
@@ -274,12 +302,7 @@ With optional FILES-ONLY, list only buffers visiting files."
   (interactive)
   (save-buffers-kill-terminal))
 
-;; Настройка mode-line
 ;; Cleaner mode-line
-(setq column-number-mode t)
-(setq line-number-mode t)
-(setq size-indication-mode nil)
-
 (defun my-buffer-char-count ()
   "Return current buffer character count."
   (number-to-string (buffer-size)))
@@ -397,9 +420,11 @@ With optional FILES-ONLY, list only buffers visiting files."
         company-minimum-prefix-length 1
         company-selection-wrap-around t
         company-tooltip-align-annotations t
-        company-backends '((company-dabbrev company-files))
-        company-dabbrev-other-buffers 'all
-        company-dabbrev-code-other-buffers t
+        ;; Eglot exposes LSP candidates through completion-at-point, which
+        ;; Company consumes via `company-capf'.  Dabbrev and file names remain
+        ;; available as fallbacks when no CAPF backend applies.
+        company-backends '(company-capf
+                           (company-dabbrev company-files))
         ;; Treat underscores as part of an identifier, so `file_path' is
         ;; collected and completed as one candidate instead of two words.
         company-dabbrev-char-regexp "\\(?:\\sw\\|\\s_\\)"
@@ -454,6 +479,18 @@ With optional FILES-ONLY, list only buffers visiting files."
   `(minibuffer-with-setup-hook #'my-select-minibuffer-input
      ,@body))
 
+(defvar my-consult-line-last-query nil
+  "Input used by the most recent `my-consult-line-repeat' invocation.")
+
+(defun my-remember-minibuffer-input-as (variable)
+  "Remember minibuffer input in VARIABLE when the minibuffer exits."
+  (add-hook 'minibuffer-exit-hook
+            (lambda ()
+              (set variable (minibuffer-contents-no-properties)))
+            nil t))
+
+(add-to-list 'savehist-additional-variables 'my-consult-line-last-query)
+
 (defun my-consult-line-repeat ()
   "Search with Consult using the region or the previous search query.
 The initial query is selected, so typing replaces it while navigation keys
@@ -461,10 +498,13 @@ can immediately continue the existing search."
   (interactive)
   (let ((initial
          (or (my-active-region-text)
-             (and (boundp 'consult--line-history)
-                  (car consult--line-history)))))
+             my-consult-line-last-query)))
     (my-with-selected-minibuffer-input
-      (consult-line initial))))
+      (minibuffer-with-setup-hook
+          (lambda ()
+            (my-remember-minibuffer-input-as
+             'my-consult-line-last-query))
+        (consult-line initial)))))
 
 (use-package embark
   :ensure t
@@ -492,14 +532,8 @@ can immediately continue the existing search."
   "Input used by the most recent `my-search-directory' invocation.")
 
 (dolist (variable '(my-search-directory-last-directory
-                    my-search-directory-last-query
-                    consult--grep-history))
+                    my-search-directory-last-query))
   (add-to-list 'savehist-additional-variables variable))
-
-(defun my-search-directory--remember-query ()
-  "Remember the current directory-search minibuffer input."
-  (setq my-search-directory-last-query
-        (minibuffer-contents-no-properties)))
 
 (defun my-search-directory (&optional new-search)
   "Search recursively with ripgrep and remember the search between calls.
@@ -525,8 +559,8 @@ prompt for another directory."
     (my-with-selected-minibuffer-input
       (minibuffer-with-setup-hook
           (lambda ()
-            (add-hook 'post-command-hook
-                      #'my-search-directory--remember-query nil t))
+            (my-remember-minibuffer-input-as
+             'my-search-directory-last-query))
         (consult-ripgrep directory initial)))))
 
 (defun load-nordic-midnight ()
@@ -557,41 +591,6 @@ prompt for another directory."
   :commands (mc/mark-previous-like-this mc/mark-next-like-this)
   :init
   (setq mc/always-run-for-all t))
-
-;; Keep Vertico in the regular minibuffer at the bottom of the frame.
-;; `vertico-posframe-mode' is deliberately not enabled.
-(with-eval-after-load 'vertico-posframe
-  (vertico-posframe-mode -1))
-
-
-;; Пакет для поведения похожего на ide для удобного перемещения между позициями
-;;(use-package dogears
-;;  :ensure t
-;;
-;;  :custom
-;;  ;; Запоминать позицию после 1 секунды бездействия.
-;;  (dogears-idle 0.5)
-;;
-;;  ;; Размер истории.
-;;  (dogears-limit 200)
-;;
-;;  :bind
-;;  (("M-<left>"  . dogears-back)
-;;   ("M-<right>" . dogears-forward))
-;;
-;;  :config
-;;  (dogears-mode 1)
-
-  ;; Запоминать позицию непосредственно перед крупными переходами.
-;;  (dolist (command '(switch-to-buffer
-;;                     find-file
-;;                     beginning-of-buffer
-;;                     end-of-buffer
-;;                     xref-find-definitions
-;;                     xref-find-references))
-;;    (unless (advice-member-p #'dogears-remember command)
-;;      (advice-add command :before #'dogears-remember))))
-;;
 
 ;; git
 (use-package magit
@@ -625,14 +624,6 @@ prompt for another directory."
   :ensure t
   :defer t)
 
-
-;; (load-file (expand-file-name "cpp-dev.el" user-emacs-directory))
-;; (company-mode 1)
-
-(defun kill-other-buffers ()
-  "Kill all buffers except the one currently active."
-  (interactive)
-  (mapc 'kill-buffer (delq (current-buffer) (buffer-list))))
 
 (add-hook 'gdscript-mode-hook
           (lambda ()
@@ -692,7 +683,8 @@ prompt for another directory."
 
 
 (defun my-install-missing-treesit-grammars ()
-  "Install every missing tree-sitter grammar during startup."
+  "Install every missing tree-sitter grammar on explicit request."
+  (interactive)
   (when (treesit-available-p)
     (dolist (entry treesit-language-source-alist)
       (let* ((language (car entry))
@@ -727,8 +719,6 @@ prompt for another directory."
                (message "Tree-sitter grammar %s installation failed: %s"
                         label
                         (error-message-string err))))))))))
-
-(my-install-missing-treesit-grammars)
 
 
 ;; ============================================================
@@ -822,14 +812,15 @@ so that the previous window layout can be restored."
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map ctl-x-map)
     (keymap-set map "0" #'my-close-current-window)
+    (keymap-set map "C-b" #'undefined)
     (keymap-set map "b" #'consult-buffer)
     map)
   "Keymap derived from `ctl-x-map' and used behind the C-p prefix.")
 
 (defconst my-global-keybindings
   `(("TAB"               . my-indent-for-tab)
-    ("<backtab>"         . my-unindent-4-spaces)
-    ("S-TAB"             . my-unindent-4-spaces)
+    ("<backtab>"         . my-unindent)
+    ("S-TAB"             . my-unindent)
     ("<escape>"          . keyboard-escape-quit)
     ("S-<delete>"        . my-delete-current-line)
 
@@ -959,21 +950,6 @@ Otherwise call ORIGINAL-FUNCTION with ARGUMENT normally."
   ;; The global `keyboard-escape-quit' does not disable multiple-cursors.
   (keymap-set mc/keymap "<escape>" #'mc/keyboard-quit))
 
-;; ======================= CHEAT SHEET =============
-;;   C-p C-f     открыть файл, раньше C-x C-f
-;;   C-p C-s     сохранить файл, раньше C-x C-s
-;;   C-p b       переключить буфер
-;;   C-p k       закрыть буфер
-;;   C-p 2       split below
-;;   C-p 3       split right
-;;   C-p 0       закрыть текущее окно
-;;   C-p 1       оставить одно окно
-;;  ctrl+p, ctrl+f - find-file
-;;  ctrl+p, b - список буферов
-;;  ctrl+p, b, RET - переключиться на прошлый буфер
-;;  ctr+g - отменить команду
-;;
-
 ;; ============================================================
 ;;                      EMACS CHEATSHEET
 ;; ============================================================
@@ -1001,7 +977,6 @@ Otherwise call ORIGINAL-FUNCTION with ARGUMENT normally."
 ;; C-s          Сохранить текущий файл
 ;; C-p b        Переключиться на другой буфер
 ;; C-p k        Закрыть буфер
-;; C-p C-b      Показать список буферов
 ;;
 ;; Файл хранится на диске.
 ;; Буфер — открытая копия файла внутри Emacs.
