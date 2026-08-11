@@ -131,116 +131,28 @@
 
 
 ;; Familiar copy, cut, paste and undo shortcuts.
-(setq cua-enable-cua-keys t)
 (cua-mode 1)
+(setq cua-enable-cua-keys t)
 
 ;; ctrl + shift и стрелка вверх/вниз для перемещения строчки
-(defun my-move-line-or-region (direction)
-  "Move the current line or active region by one line in DIRECTION.
-DIRECTION must be -1 to move up or 1 to move down.  When a region is
-active, move every line touched by that region and keep it selected."
-  (unless (memq direction '(-1 1))
-    (error "Invalid move direction: %S" direction))
-  (let* ((region-active (use-region-p))
-         (original-point (point))
-         (original-mark (and region-active (mark)))
-         (raw-beginning (if region-active (region-beginning) (point)))
-         (raw-end (if region-active (region-end) (point))))
-    ;; Multiple-cursors must invoke this command once.  Treat all cursor lines
-    ;; as one block; editing them one after another invalidates later cursors.
-    (when (bound-and-true-p multiple-cursors-mode)
-      (dolist (cursor (mc/all-fake-cursors))
-        (let* ((cursor-point
-                (marker-position (overlay-get cursor 'point)))
-               (cursor-mark
-                (and (overlay-get cursor 'mark-active)
-                     (marker-position (overlay-get cursor 'mark))))
-               (cursor-beginning
-                (if cursor-mark
-                    (min cursor-point cursor-mark)
-                  cursor-point))
-               (cursor-end
-                (if cursor-mark
-                    (max cursor-point cursor-mark)
-                  cursor-point)))
-          (setq raw-beginning (min raw-beginning cursor-beginning)
-                raw-end (max raw-end cursor-end)))))
-    ;; `transpose-regions' needs a separator after the final line.  Add one
-    ;; temporarily so files without a trailing newline are not joined.
-    (let ((temporary-final-newline
-           (and (> (point-max) (point-min))
-                (not (eq (char-before (point-max)) ?\n)))))
-      (unwind-protect
-        (progn
-          (when temporary-final-newline
-            (save-excursion
-              (goto-char (point-max))
-              (insert "\n")))
-          (let* ((beginning
-                  (save-excursion
-                    (goto-char raw-beginning)
-                    (line-beginning-position)))
-                 (end
-                  (save-excursion
-                    (goto-char raw-end)
-                    (if (and region-active
-                             (> raw-end beginning)
-                             (= raw-end (line-beginning-position)))
-                        raw-end
-                      (line-beginning-position 2))))
-                 (point-offset (- original-point beginning))
-                 (mark-offset
-                  (and region-active (- original-mark beginning)))
-                 new-beginning)
-            (when (= beginning end)
-              (user-error "There is no line content to move"))
-            (if (< direction 0)
-                (progn
-                  (when (= beginning (point-min))
-                    (user-error "Already at the first line"))
-                  (let ((previous-beginning
-                         (save-excursion
-                           (goto-char beginning)
-                           (line-beginning-position 0))))
-                    (transpose-regions
-                     previous-beginning beginning beginning end)
-                    (setq new-beginning previous-beginning)))
-              (when (= end (point-max))
-                (user-error "Already at the last line"))
-              (let ((next-end
-                     (save-excursion
-                       (goto-char end)
-                       (line-beginning-position 2))))
-                (transpose-regions beginning end end next-end)
-                (setq new-beginning
-                      (+ beginning (- next-end end)))))
-            (when temporary-final-newline
-              (save-excursion
-                (goto-char (point-max))
-                (delete-char -1))
-              (setq temporary-final-newline nil))
-            (goto-char (min (point-max)
-                            (+ new-beginning point-offset)))
-            (when region-active
-              (set-mark (min (point-max)
-                             (+ new-beginning mark-offset)))
-              (setq deactivate-mark nil)
-              (activate-mark))))
-      (when (and temporary-final-newline
-                 (eq (char-before (point-max)) ?\n))
-        (save-excursion
-          (goto-char (point-max))
-          (delete-char -1)))))))
-
 (defun my-move-line-up ()
-  "Move current line or selected region up by one line."
+  "Move current line up by one line."
   (interactive)
-  (my-move-line-or-region -1))
+  (when (> (line-number-at-pos) 1)
+    (let ((col (current-column)))
+      (transpose-lines 1)
+      (forward-line -2)
+      (move-to-column col t))))
 
 (defun my-move-line-down ()
-  "Move current line or selected region down by one line."
+  "Move current line down by one line."
   (interactive)
-  (my-move-line-or-region 1))
+  (when (< (line-end-position) (point-max))
+    (let ((col (current-column)))
+      (forward-line 1)
+      (transpose-lines 1)
+      (forward-line -1)
+      (move-to-column col t))))
 
 ;;Подсветка текущей строки
 ;; Line numbers
@@ -610,9 +522,7 @@ prompt for another directory."
   :ensure t
   :commands (mc/mark-previous-like-this mc/mark-next-like-this)
   :init
-  ;; Let Multiple Cursors use its command allowlists.  Running every unknown
-  ;; command at every cursor is unsafe for commands which rearrange the buffer.
-  (setq mc/always-run-for-all nil))
+  (setq mc/always-run-for-all t))
 
 ;; git
 (use-package magit
@@ -932,69 +842,23 @@ so that the previous window layout can be restored."
   (keymap-set transient-sticky-map "<escape>" #'transient-quit-seq))
 
 (with-eval-after-load 'multiple-cursors
-  (defun my-cua-copy-all-cursor-regions (original-function argument)
-    "Copy every multiple-cursor region as one newline-separated block.
-Otherwise call ORIGINAL-FUNCTION with ARGUMENT normally."
-    (if (and (bound-and-true-p multiple-cursors-mode)
-             (> (mc/num-cursors) 1))
-        (let ((regions
-               (when (use-region-p)
-                 (list (cons (region-beginning) (region-end))))))
-          ;; Read cursor overlays without creating or removing temporary
-          ;; cursors.  Mutating that list during a CUA command can make the
-          ;; Multiple Cursors post-command hook repeatedly revisit cursors.
-          (dolist (cursor (mc/all-fake-cursors))
-            (let ((cursor-point
-                   (marker-position (overlay-get cursor 'point)))
-                  (cursor-mark
-                   (and (overlay-get cursor 'mark-active)
-                        (marker-position (overlay-get cursor 'mark)))))
-              (when cursor-mark
-                (push (cons (min cursor-point cursor-mark)
-                            (max cursor-point cursor-mark))
-                      regions))))
-          (setq regions
-                (sort regions (lambda (left right)
-                                (< (car left) (car right)))))
-          (let ((pieces
-                 (mapcar
-                  (lambda (region)
-                    (buffer-substring-no-properties
-                     (car region) (cdr region)))
-                  regions)))
-            (if pieces
-                (let ((text (mapconcat #'identity pieces "\n")))
-                  (kill-new text)
-                  (deactivate-mark)
-                  (message "Copied %d selections" (length pieces)))
-              (funcall original-function argument))))
-      (funcall original-function argument)))
-
-  (advice-add 'cua-copy-region :around #'my-cua-copy-all-cursor-regions)
-
-  ;; Load the user's saved classifications before enforcing the commands whose
-  ;; semantics are defined by this configuration.
-  (mc/load-lists)
-
-  ;; Copying and line movement aggregate all cursors themselves and must run
-  ;; only once.  Include CUA handlers because the exact command seen by
-  ;; Multiple Cursors depends on the active CUA keymap.
-  (dolist (command '(cua-copy-handler
-                     cua-copy-region
-                     copy-region-as-kill
-                     my-move-line-up
-                     my-move-line-down))
-    (setq mc/cmds-to-run-for-all
-          (delq command mc/cmds-to-run-for-all))
+  ;; CUA cut/copy handlers run ONCE (not per-cursor).
+  ;; CUA mode remaps commands in ways that are incompatible with
+  ;; per-cursor execution — attempting it causes Emacs to hang.
+  ;; To cut/copy from ALL cursors, use the built-in kill-ring-save
+  ;; (M-w) or kill-region, which multiple-cursors natively supports.
+  (dolist (command '(cua-cut-handler cua-copy-handler
+                     cua-cut-region cua-copy-region))
+    (setq mc/cmds-to-run-for-all (delq command mc/cmds-to-run-for-all))
     (add-to-list 'mc/cmds-to-run-once command))
 
-  ;; Cutting and pasting still execute independently at every cursor.
-  (dolist (command '(cua-cut-handler cua-cut-region kill-region cua-paste))
-    (setq mc/cmds-to-run-once
-          (delq command mc/cmds-to-run-once))
+  ;; Paste and line movement: execute per-cursor.
+  (dolist (command '(cua-paste
+                     my-move-line-up
+                     my-move-line-down))
+    (setq mc/cmds-to-run-once (delq command mc/cmds-to-run-once))
     (add-to-list 'mc/cmds-to-run-for-all command))
 
-  ;; The global `keyboard-escape-quit' does not disable multiple-cursors.
   (keymap-set mc/keymap "<escape>" #'mc/keyboard-quit))
 
 ;; ============================================================
