@@ -836,30 +836,42 @@ so that the previous window layout can be restored."
   (keymap-set magit-mode-map "C-p" my-ctl-x-map)
   (keymap-set magit-mode-map "<escape>" #'keyboard-escape-quit))
 
-(with-eval-after-load 'transient
-  ;; Magit popups are implemented by Transient and use their own active maps.
-  (keymap-set transient-base-map "<escape>" #'transient-quit-one)
-  (keymap-set transient-sticky-map "<escape>" #'transient-quit-seq))
+
+(defun my-cua-cut-handler-with-multiple-cursors (original-function &rest args)
+  "Cut immediately when CUA's cut key is used with multiple cursors.
+Otherwise call ORIGINAL-FUNCTION with ARGS normally.  CUA normally handles
+`C-x' by starting a timer and replaying the key.  Repeating that state machine
+for fake cursors can keep adding events to the input queue indefinitely."
+  (if (bound-and-true-p multiple-cursors-mode)
+      ;; A fake cursor can have no active region even when the real cursor
+      ;; does.  In that case do nothing instead of starting CUA's replay
+      ;; machinery for that cursor.
+      (when (use-region-p)
+        (cua-cut-region current-prefix-arg))
+    (apply original-function args)))
 
 (with-eval-after-load 'multiple-cursors
-  ;; CUA cut/copy handlers run ONCE (not per-cursor).
-  ;; CUA mode remaps commands in ways that are incompatible with
-  ;; per-cursor execution — attempting it causes Emacs to hang.
-  ;; To cut/copy from ALL cursors, use the built-in kill-ring-save
-  ;; (M-w) or kill-region, which multiple-cursors natively supports.
-  (dolist (command '(cua-cut-handler cua-copy-handler
-                     cua-cut-region cua-copy-region))
-    (setq mc/cmds-to-run-for-all (delq command mc/cmds-to-run-for-all))
-    (add-to-list 'mc/cmds-to-run-once command))
+  ;; Apply saved choices first, then enforce the safe behavior below.
+  (mc/load-lists)
+  ;; В MC C-x — обычное вырезание region.
+  ;; Не запускаем сложный CUA prefix handler.
+  (keymap-set mc/keymap "C-x" #'kill-region)
 
-  ;; Paste and line movement: execute per-cursor.
-  (dolist (command '(cua-paste
+  ;; Paste не является CUA prefix key, его можно оставить.
+  (keymap-set mc/keymap "C-v" #'cua-paste)
+
+  (keymap-set mc/keymap "<escape>" #'mc/keyboard-quit)
+
+  ;; Наши команды перемещения должны повторяться для каждого cursor.
+  (dolist (command '(kill-region
+                     cua-paste
                      my-move-line-up
                      my-move-line-down))
-    (setq mc/cmds-to-run-once (delq command mc/cmds-to-run-once))
+    (setq mc/cmds-to-run-once
+          (delq command mc/cmds-to-run-once))
     (add-to-list 'mc/cmds-to-run-for-all command))
+)
 
-  (keymap-set mc/keymap "<escape>" #'mc/keyboard-quit))
 
 ;; ============================================================
 ;;                      EMACS CHEATSHEET
