@@ -837,25 +837,33 @@ so that the previous window layout can be restored."
   (keymap-set magit-mode-map "<escape>" #'keyboard-escape-quit))
 
 
-(defun my-cua-cut-handler-with-multiple-cursors (original-function &rest args)
-  "Cut immediately when CUA's cut key is used with multiple cursors.
-Otherwise call ORIGINAL-FUNCTION with ARGS normally.  CUA normally handles
-`C-x' by starting a timer and replaying the key.  Repeating that state machine
-for fake cursors can keep adding events to the input queue indefinitely."
-  (if (bound-and-true-p multiple-cursors-mode)
-      ;; A fake cursor can have no active region even when the real cursor
-      ;; does.  In that case do nothing instead of starting CUA's replay
-      ;; machinery for that cursor.
-      (when (use-region-p)
-        (cua-cut-region current-prefix-arg))
-    (apply original-function args)))
+;; CUA handles C-x/C-c through a delayed replay that pushes events back onto
+;; `unread-command-events'.  Under multiple cursors that command is repeated
+;; for every fake cursor, so the queue grows without bound and Emacs hangs.
+;; While multiple cursors are active, cut/copy the region directly instead.
+(defun my-mc-cua-prefix-override (original-function)
+  "Cut/copy immediately when CUA's C-x/C-c handler runs under multiple cursors.
+Otherwise call ORIGINAL-FUNCTION normally."
+  (if (and (bound-and-true-p multiple-cursors-mode)
+           (use-region-p))
+      (if (memq 'cua-cut-handler (list this-command this-original-command))
+          (kill-region (region-beginning) (region-end))
+        (kill-ring-save (region-beginning) (region-end)))
+    (funcall original-function)))
 
-(with-eval-after-load 'multiple-cursors
+;; Install the advice as soon as CUA is available.  It must NOT live behind
+;; `with-eval-after-load 'multiple-cursors': the cursor commands are autoloaded
+;; from `mc-mark-more', which only requires `multiple-cursors-core', so the
+;; `multiple-cursors' feature is never loaded and the advice would never run.
+(with-eval-after-load 'cua-base
+  (unless (advice-member-p #'my-mc-cua-prefix-override
+                           'cua--prefix-override-handler)
+    (advice-add 'cua--prefix-override-handler
+                :around #'my-mc-cua-prefix-override)))
+
+(with-eval-after-load 'multiple-cursors-core
   ;; Apply saved choices first, then enforce the safe behavior below.
   (mc/load-lists)
-  ;; В MC C-x — обычное вырезание region.
-  ;; Не запускаем сложный CUA prefix handler.
-  (keymap-set mc/keymap "C-x" #'kill-region)
 
   ;; Paste не является CUA prefix key, его можно оставить.
   (keymap-set mc/keymap "C-v" #'cua-paste)
@@ -863,7 +871,8 @@ for fake cursors can keep adding events to the input queue indefinitely."
   (keymap-set mc/keymap "<escape>" #'mc/keyboard-quit)
 
   ;; Наши команды перемещения должны повторяться для каждого cursor.
-  (dolist (command '(kill-region
+  (dolist (command '(cua-cut-handler
+                     cua-copy-handler
                      cua-paste
                      my-move-line-up
                      my-move-line-down))
